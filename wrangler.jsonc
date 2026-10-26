@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vocal-journal-api",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-26",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vocal-journal",
+      "database_id": "local-vocal-journal",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

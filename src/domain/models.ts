@@ -47,19 +47,23 @@ export interface Attempt extends RecoverableEntity {
 export interface Tag extends RecoverableEntity {
   id: EntityId
   name: string
-  color?: string
+  exerciseCount?: number
   createdAt: ISODateTime
   updatedAt: ISODateTime
+}
+
+export interface ExerciseTag {
+  id: EntityId
+  name: string
 }
 
 export interface Exercise extends RecoverableEntity {
   id: EntityId
   title: string
-  tagIds: EntityId[]
-  plusAudio?: MediaFile
-  minusAudio?: MediaFile
-  teacherNotes: string
-  attempts: Attempt[]
+  notes: string
+  plusMediaId: EntityId | null
+  minusMediaId: EntityId | null
+  tags: ExerciseTag[]
   createdAt: ISODateTime
   updatedAt: ISODateTime
 }

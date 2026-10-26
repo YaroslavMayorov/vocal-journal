@@ -1,13 +1,17 @@
+import { Button } from './Button'
+
 interface StateMessageProps {
   title: string
   description: string
   tone?: 'neutral' | 'error'
+  action?: React.ReactNode
 }
 
 export function StateMessage({
   title,
   description,
   tone = 'neutral',
+  action,
 }: StateMessageProps) {
   return (
     <div
@@ -26,6 +30,7 @@ export function StateMessage({
       >
         {description}
       </p>
+      {action ? <div className="mt-4">{action}</div> : null}
     </div>
   )
 }
@@ -36,12 +41,19 @@ export function LoadingState() {
   )
 }
 
-export function ErrorState() {
+export function ErrorState({ onRetry }: { onRetry?: () => void }) {
   return (
     <StateMessage
       title="Не удалось загрузить данные"
       description="Попробуйте обновить страницу немного позже."
       tone="error"
+      action={
+        onRetry ? (
+          <Button variant="secondary" onClick={onRetry}>
+            Повторить
+          </Button>
+        ) : undefined
+      }
     />
   )
 }

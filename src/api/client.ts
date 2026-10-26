@@ -1,19 +1,30 @@
 const DEFAULT_API_BASE_URL = '/api'
 
+export interface ApiErrorPayload {
+  code: string
+  message: string
+  fieldErrors?: Record<string, string[] | undefined>
+}
+
 export interface ApiErrorBody {
-  message?: string
-  code?: string
+  error?: ApiErrorPayload
+}
+
+interface ApiSuccessBody<T> {
+  data: T
 }
 
 export class ApiError extends Error {
   readonly status: number
-  readonly body?: ApiErrorBody
+  readonly code?: string
+  readonly fieldErrors?: Record<string, string[] | undefined>
 
-  constructor(status: number, message: string, body?: ApiErrorBody) {
+  constructor(status: number, message: string, body?: ApiErrorPayload) {
     super(message)
     this.name = 'ApiError'
     this.status = status
-    this.body = body
+    this.code = body?.code
+    this.fieldErrors = body?.fieldErrors
   }
 }
 
@@ -30,13 +41,14 @@ export function createApiClient(options: ApiClientOptions = {}) {
   const baseUrl = trimTrailingSlash(
     options.baseUrl ?? import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL,
   )
-  const fetchImpl = options.fetchImpl ?? fetch
+  const configuredFetch = options.fetchImpl
 
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await fetchImpl(`${baseUrl}/${path.replace(/^\//, '')}`, {
+    const response = await (configuredFetch ?? fetch)(`${baseUrl}/${path.replace(/^\//, '')}`, {
       ...init,
       headers: {
         Accept: 'application/json',
+        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
         ...init?.headers,
       },
     })
@@ -47,8 +59,8 @@ export function createApiClient(options: ApiClientOptions = {}) {
         | undefined
       throw new ApiError(
         response.status,
-        body?.message ?? 'Не удалось выполнить запрос',
-        body,
+        body?.error?.message ?? 'Не удалось выполнить запрос',
+        body?.error,
       )
     }
 
@@ -56,7 +68,8 @@ export function createApiClient(options: ApiClientOptions = {}) {
       return undefined as T
     }
 
-    return (await response.json()) as T
+    const body = (await response.json()) as ApiSuccessBody<T>
+    return body.data
   }
 
   return { request }

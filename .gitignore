@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Builds and test output
+dist/
+coverage/
+
+# Environment and local configuration
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# Cloudflare local state
+.wrangler/
+.dev.vars

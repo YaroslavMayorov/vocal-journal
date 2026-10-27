@@ -6,6 +6,7 @@ import { Button } from '../../components/ui/Button'
 import type { LyricsComment, LyricsDocument, Song } from '../../domain/models'
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges'
 import { LyricsInputEditor } from './LyricsInputEditor'
+import { removeAnnotation } from './annotations'
 import { lyricsEditorExtensions } from './editorConfig'
 
 interface LyricsWorkspaceProps {
@@ -20,16 +21,18 @@ interface SelectedText {
   overlapsAnnotation: boolean
 }
 
-function CommentCard({ active, comment, onActivate, onSave }: {
+function CommentCard({ active, comment, onActivate, onDelete, onSave }: {
   active: boolean
   comment: LyricsComment
   onActivate: () => void
+  onDelete: () => Promise<void>
   onSave: (text: string) => Promise<void>
 }) {
   const [isEditing, setIsEditing] = useState(false)
   const [text, setText] = useState(comment.text)
   const [error, setError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const save = async (event: FormEvent) => {
     event.preventDefault()
@@ -43,6 +46,29 @@ function CommentCard({ active, comment, onActivate, onSave }: {
       setError(caught instanceof ApiError ? caught.message : 'Не удалось сохранить комментарий.')
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  const deleteComment = async () => {
+    if (
+      isDeleting ||
+      !window.confirm(
+        'Удалить комментарий? Выбранный фрагмент текста останется без изменений.',
+      )
+    ) {
+      return
+    }
+    setError('')
+    setIsDeleting(true)
+    try {
+      await onDelete()
+    } catch (caught) {
+      setError(
+        caught instanceof ApiError
+          ? caught.message
+          : 'Не удалось удалить комментарий.',
+      )
+      setIsDeleting(false)
     }
   }
 
@@ -74,7 +100,21 @@ function CommentCard({ active, comment, onActivate, onSave }: {
       ) : (
         <div className="mt-3">
           <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{comment.text}</p>
-          <button type="button" className="mt-2 text-xs font-medium text-brand-700 hover:text-brand-600" onClick={(event) => { event.stopPropagation(); setIsEditing(true) }}>Редактировать</button>
+          {error ? <p role="alert" className="mt-2 text-xs text-red-600">{error}</p> : null}
+          <div className="mt-2 flex flex-wrap gap-3">
+            <button type="button" className="text-xs font-medium text-brand-700 hover:text-brand-600" onClick={(event) => { event.stopPropagation(); setIsEditing(true) }}>Редактировать</button>
+            <button
+              type="button"
+              disabled={isDeleting}
+              className="text-xs font-medium text-red-600 hover:text-red-700 disabled:text-slate-400"
+              onClick={(event) => {
+                event.stopPropagation()
+                void deleteComment()
+              }}
+            >
+              {isDeleting ? 'Удаление…' : 'Удалить'}
+            </button>
+          </div>
         </div>
       )}
     </article>
@@ -183,6 +223,21 @@ export function LyricsWorkspace({ song, onSongChange }: LyricsWorkspaceProps) {
     }
   }
 
+  const deleteComment = async (commentId: string) => {
+    const lyricsDocument = removeAnnotation(song.lyricsDocument, commentId)
+    const updatedSong = await songsApi.deleteComment(
+      song.id,
+      commentId,
+      lyricsDocument,
+    )
+    onSongChange(updatedSong)
+    setActiveCommentId(null)
+    setSelectedText(null)
+    if (updatedSong.lyricsComments.length === 0) {
+      setIsMobileCommentsOpen(false)
+    }
+  }
+
   const commentList = (
     <div className="space-y-3">
       {song.lyricsComments.length ? song.lyricsComments.map((comment) => (
@@ -191,6 +246,7 @@ export function LyricsWorkspace({ song, onSongChange }: LyricsWorkspaceProps) {
           comment={comment}
           active={comment.id === activeCommentId}
           onActivate={() => activateComment(comment)}
+          onDelete={() => deleteComment(comment.id)}
           onSave={async (text) => onSongChange(await songsApi.updateComment(song.id, comment.id, text))}
         />
       )) : (
@@ -284,6 +340,7 @@ export function LyricsWorkspace({ song, onSongChange }: LyricsWorkspaceProps) {
                 comment={activeComment}
                 active
                 onActivate={() => undefined}
+                onDelete={() => deleteComment(activeComment.id)}
                 onSave={async (text) =>
                   onSongChange(
                     await songsApi.updateComment(song.id, activeComment.id, text),

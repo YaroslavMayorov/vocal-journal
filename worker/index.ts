@@ -401,6 +401,53 @@ async function handleUpdateLyricsComment(
   return json(await getSong(env.DB, songId))
 }
 
+async function handleDeleteLyricsComment(
+  request: Request,
+  env: Env,
+  songId: string,
+  commentId: string,
+): Promise<Response> {
+  const existing = await env.DB.prepare(
+    'SELECT id FROM lyrics_comments WHERE id = ? AND song_id = ?',
+  )
+    .bind(commentId, songId)
+    .first<{ id: string }>()
+  if (!existing) {
+    return error(404, 'COMMENT_NOT_FOUND', 'Комментарий не найден')
+  }
+
+  const validation = lyricsUpdateSchema.safeParse(await parseJson(request))
+  if (!validation.success) return validationError(validation.error)
+
+  const annotationIds = getAnnotationIds(validation.data.lyricsDocument)
+  if (annotationIds.has(commentId)) {
+    return error(
+      422,
+      'ANNOTATION_MARK_PRESENT',
+      'Метка удаляемого комментария осталась в тексте',
+    )
+  }
+  if (!(await validateDocumentCommentIds(env.DB, songId, annotationIds))) {
+    return error(
+      422,
+      'UNKNOWN_ANNOTATION',
+      'Текст содержит неизвестную аннотацию',
+    )
+  }
+
+  const now = new Date().toISOString()
+  await env.DB.batch([
+    env.DB.prepare(
+      'UPDATE songs SET lyrics_document = ?, updated_at = ? WHERE id = ?',
+    ).bind(JSON.stringify(validation.data.lyricsDocument), now, songId),
+    env.DB.prepare(
+      'DELETE FROM lyrics_comments WHERE id = ? AND song_id = ?',
+    ).bind(commentId, songId),
+  ])
+
+  return json(await getSong(env.DB, songId))
+}
+
 async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url)
   const parts = url.pathname.split('/').filter(Boolean)
@@ -475,9 +522,13 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (resource === 'songs' && parts[3] === 'comments' && parts.length === 5) {
     const commentId = validateId(parts[4] ?? '')
     if (commentId instanceof Response) return commentId
-    return request.method === 'PUT'
-      ? handleUpdateLyricsComment(request, env, id, commentId)
-      : error(405, 'METHOD_NOT_ALLOWED', 'Метод не поддерживается')
+    if (request.method === 'PUT') {
+      return handleUpdateLyricsComment(request, env, id, commentId)
+    }
+    if (request.method === 'DELETE') {
+      return handleDeleteLyricsComment(request, env, id, commentId)
+    }
+    return error(405, 'METHOD_NOT_ALLOWED', 'Метод не поддерживается')
   }
 
   return parts.length > 3

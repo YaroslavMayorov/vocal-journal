@@ -52,4 +52,13 @@ export const songsApi = {
       method: 'PUT',
       body: JSON.stringify({ text }),
     }),
+  deleteComment: (
+    songId: string,
+    commentId: string,
+    lyricsDocument: LyricsDocument,
+  ) =>
+    apiClient.request<Song>(`/songs/${songId}/comments/${commentId}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ lyricsDocument }),
+    }),
 }

@@ -419,6 +419,50 @@ describe('API песен', () => {
     })
   })
 
+  it('удаляет комментарий и его метку, не удаляя выбранный текст', async () => {
+    const song = await createSong('Удаление комментария')
+    const commentId = '3f4ec587-071b-4d61-ad3a-959890817c78'
+    const annotatedDocument: TestLyricsDocument = {
+      type: 'doc',
+      content: [{
+        type: 'paragraph',
+        content: [{
+          type: 'text',
+          text: 'Текст остаётся',
+          marks: [{ type: 'annotation', attrs: { commentId } }],
+        }],
+      }],
+    }
+    await request<TestSong>(`/api/songs/${song.id}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: commentId,
+        text: 'Временный комментарий',
+        quotedText: 'Текст остаётся',
+        lyricsDocument: annotatedDocument,
+      }),
+    })
+
+    const documentWithoutAnnotation: TestLyricsDocument = {
+      type: 'doc',
+      content: [{
+        type: 'paragraph',
+        content: [{ type: 'text', text: 'Текст остаётся' }],
+      }],
+    }
+    const deleted = await request<TestSong>(
+      `/api/songs/${song.id}/comments/${commentId}`,
+      {
+        method: 'DELETE',
+        body: JSON.stringify({ lyricsDocument: documentWithoutAnnotation }),
+      },
+    )
+
+    expect(deleted.response.status).toBe(200)
+    expect(deleted.body?.data?.lyricsComments).toEqual([])
+    expect(deleted.body?.data?.lyricsDocument).toEqual(documentWithoutAnnotation)
+  })
+
   it('сохраняет привязку после посторонней правки и помечает удалённый фрагмент', async () => {
     const song = await createSong('Стабильная привязка')
     const commentId = 'bc0c458d-6627-45b9-8bda-f036ea878957'

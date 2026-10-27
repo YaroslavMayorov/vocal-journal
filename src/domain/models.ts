@@ -68,23 +68,69 @@ export interface Exercise extends RecoverableEntity {
   updatedAt: ISODateTime
 }
 
-export type SongStatus = 'learning' | 'learned' | 'paused'
+export type SongStatus = 'learning' | 'learned' | 'postponed'
 
 export const SONG_STATUS_LABELS: Record<SongStatus, string> = {
   learning: 'Изучаю',
   learned: 'Выучена',
-  paused: 'Отложена',
+  postponed: 'Отложена',
 }
 
-export interface Song extends RecoverableEntity {
+export const SONG_STATUSES: SongStatus[] = ['learning', 'learned', 'postponed']
+
+export type LyricsMark =
+  | { type: 'bold' }
+  | { type: 'italic' }
+  | { type: 'highlight'; attrs: { color: string } }
+  | { type: 'annotation'; attrs: { commentId: EntityId } }
+
+export interface LyricsTextNode {
+  type: 'text'
+  text: string
+  marks?: LyricsMark[]
+}
+
+export interface LyricsHardBreakNode {
+  type: 'hardBreak'
+}
+
+export interface LyricsParagraphNode {
+  type: 'paragraph'
+  content?: Array<LyricsTextNode | LyricsHardBreakNode>
+}
+
+export interface LyricsDocument {
+  type: 'doc'
+  content: LyricsParagraphNode[]
+}
+
+export const EMPTY_LYRICS_DOCUMENT: LyricsDocument = {
+  type: 'doc',
+  content: [{ type: 'paragraph' }],
+}
+
+export interface LyricsComment {
   id: EntityId
-  title: string
-  status: SongStatus
-  youtubePerformanceUrl?: string
-  backingTrack?: MediaFile
-  lyrics: string
-  lyricsComments: Comment[]
-  attempts: Attempt[]
+  songId: EntityId
+  text: string
+  quotedText: string
+  isOrphaned: boolean
   createdAt: ISODateTime
   updatedAt: ISODateTime
+}
+
+export interface SongSummary {
+  id: EntityId
+  title: string
+  artist: string
+  status: SongStatus
+  createdAt: ISODateTime
+  updatedAt: ISODateTime
+}
+
+export interface Song extends SongSummary, RecoverableEntity {
+  youtubeUrl: string | null
+  minusMediaId: EntityId | null
+  lyricsDocument: LyricsDocument
+  lyricsComments: LyricsComment[]
 }

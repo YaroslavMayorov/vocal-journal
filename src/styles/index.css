@@ -37,3 +37,42 @@
     @apply bg-brand-100 text-brand-700;
   }
 }
+
+@layer components {
+  .lyrics-editor-content {
+    @apply min-h-64 px-4 py-4 text-[15px] leading-7 text-slate-800 outline-none sm:px-5;
+  }
+
+  .lyrics-editor-content p {
+    @apply min-h-7;
+  }
+
+  .lyrics-editor-content p + p {
+    @apply mt-1;
+  }
+
+  .lyrics-reader-content {
+    @apply min-h-64 text-[15px] leading-7 text-slate-800 outline-none;
+  }
+
+  .lyrics-reader-content p {
+    @apply min-h-7;
+  }
+
+  .lyrics-reader-content p + p {
+    @apply mt-1;
+  }
+
+  .lyrics-annotation {
+    @apply cursor-pointer rounded-sm border-b-2 border-amber-400 bg-amber-100 px-0.5 transition-colors;
+  }
+
+  .lyrics-annotation:hover,
+  .lyrics-annotation.is-selected {
+    @apply border-amber-600 bg-amber-200;
+  }
+
+  .ProseMirror-selectednode {
+    @apply outline-none;
+  }
+}

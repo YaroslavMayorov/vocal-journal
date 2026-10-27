@@ -23,6 +23,35 @@ interface TestExercise {
   tags: Array<{ id: string; name: string }>
 }
 
+interface TestLyricsDocument {
+  type: 'doc'
+  content: Array<{
+    type: 'paragraph'
+    content?: Array<{
+      type: 'text' | 'hardBreak'
+      text?: string
+      marks?: Array<{ type: string; attrs?: Record<string, string> }>
+    }>
+  }>
+}
+
+interface TestSong {
+  id: string
+  title: string
+  artist: string
+  status: 'learning' | 'learned' | 'postponed'
+  youtubeUrl: string | null
+  lyricsDocument: TestLyricsDocument
+  lyricsComments: Array<{
+    id: string
+    text: string
+    quotedText: string
+    isOrphaned: boolean
+  }>
+  createdAt: string
+  updatedAt: string
+}
+
 let miniflare: Miniflare | undefined
 let db: Awaited<ReturnType<Miniflare['getD1Database']>>
 
@@ -63,6 +92,18 @@ async function createExercise(
   return body!.data!
 }
 
+async function createSong(
+  title: string,
+  overrides: Record<string, unknown> = {},
+): Promise<TestSong> {
+  const { body, response } = await request<TestSong>('/api/songs', {
+    method: 'POST',
+    body: JSON.stringify({ title, ...overrides }),
+  })
+  expect(response.status).toBe(201)
+  return body!.data!
+}
+
 beforeEach(async () => {
   miniflare = new Miniflare(convertV4MiniflareOptions({
     compatibilityDate: '2026-10-26',
@@ -71,15 +112,20 @@ beforeEach(async () => {
     d1Databases: { DB: 'vocal-journal-test' },
   }))
   db = await miniflare.getD1Database('DB')
-  const migration = await readFile('migrations/0001_exercises_and_tags.sql', 'utf8')
-  // Apply the same migration statement-by-statement because the current
-  // Miniflare low-level exec parser treats every source line as separate SQL.
-  for (const statement of migration
-    .replace('PRAGMA foreign_keys = ON;', '')
-    .split(';')
-    .map((sql) => sql.trim())
-    .filter(Boolean)) {
-    await db.prepare(statement).run()
+  for (const file of [
+    'migrations/0001_exercises_and_tags.sql',
+    'migrations/0002_songs_and_lyrics_comments.sql',
+  ]) {
+    const migration = await readFile(file, 'utf8')
+    // Apply the same migrations statement-by-statement because the current
+    // Miniflare low-level exec parser treats every source line as separate SQL.
+    for (const statement of migration
+      .replace('PRAGMA foreign_keys = ON;', '')
+      .split(';')
+      .map((sql) => sql.trim())
+      .filter(Boolean)) {
+      await db.prepare(statement).run()
+    }
   }
 })
 
@@ -199,5 +245,228 @@ describe('API упражнений', () => {
 
     expect(malformed.response.status).toBe(400)
     expect(malformed.body?.error?.code).toBe('MALFORMED_JSON')
+  })
+})
+
+describe('API песен', () => {
+  it('создаёт песню с безопасными значениями по умолчанию и проверяет название', async () => {
+    const song = await createSong('  Human  ', {
+      youtubeUrl: 'https://youtu.be/L3wKzyIN1yk?t=10',
+    })
+
+    expect(song).toMatchObject({
+      title: 'Human',
+      artist: '',
+      status: 'learning',
+      youtubeUrl: 'https://www.youtube.com/watch?v=L3wKzyIN1yk',
+      lyricsComments: [],
+    })
+    expect(song.lyricsDocument).toEqual({
+      type: 'doc',
+      content: [{ type: 'paragraph' }],
+    })
+
+    const invalid = await request<TestSong>('/api/songs', {
+      method: 'POST',
+      body: JSON.stringify({ title: '   ' }),
+    })
+    expect(invalid.response.status).toBe(422)
+  })
+
+  it('редактирует метаданные и статус песни', async () => {
+    const song = await createSong('Старое название')
+    const updated = await request<TestSong>(`/api/songs/${song.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        title: 'Новое название',
+        artist: 'Исполнитель',
+        status: 'learned',
+        youtubeUrl: '',
+      }),
+    })
+
+    expect(updated.response.status).toBe(200)
+    expect(updated.body?.data).toMatchObject({
+      title: 'Новое название',
+      artist: 'Исполнитель',
+      status: 'learned',
+      youtubeUrl: null,
+    })
+  })
+
+  it('возвращает песни от старых к новым с детерминированным порядком', async () => {
+    const later = await createSong('Позже')
+    const earlier = await createSong('Раньше')
+    await db.prepare('UPDATE songs SET created_at = ? WHERE id = ?')
+      .bind('2026-02-02T00:00:00.000Z', later.id)
+      .run()
+    await db.prepare('UPDATE songs SET created_at = ? WHERE id = ?')
+      .bind('2026-01-01T00:00:00.000Z', earlier.id)
+      .run()
+
+    const listed = await request<TestSong[]>('/api/songs')
+    expect(listed.body?.data?.map((song) => song.title)).toEqual([
+      'Раньше',
+      'Позже',
+    ])
+  })
+
+  it('различает некорректный и отсутствующий идентификатор песни', async () => {
+    const invalid = await request<TestSong>('/api/songs/not-a-uuid')
+    const missing = await request<TestSong>(
+      '/api/songs/3cf38f9d-cff9-4666-b7ee-9e354ee4d008',
+    )
+
+    expect(invalid.response.status).toBe(400)
+    expect(missing.response.status).toBe(404)
+  })
+
+  it('сохраняет форматирование, абзацы и переносы текста', async () => {
+    const song = await createSong('Текстовая песня')
+    const document: TestLyricsDocument = {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            { type: 'text', text: 'Первая', marks: [{ type: 'bold' }] },
+            { type: 'hardBreak' },
+            {
+              type: 'text',
+              text: 'строка',
+              marks: [{ type: 'highlight', attrs: { color: '#fef08a' } }],
+            },
+          ],
+        },
+        { type: 'paragraph' },
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'Куплет', marks: [{ type: 'italic' }] }],
+        },
+      ],
+    }
+
+    const updated = await request<TestSong>(`/api/songs/${song.id}/lyrics`, {
+      method: 'PUT',
+      body: JSON.stringify({ lyricsDocument: document }),
+    })
+    expect(updated.response.status).toBe(200)
+    expect(updated.body?.data?.lyricsDocument).toEqual(document)
+
+    const invalid = await request<TestSong>(`/api/songs/${song.id}/lyrics`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        lyricsDocument: { type: 'doc', content: [{ type: 'heading' }] },
+      }),
+    })
+    expect(invalid.response.status).toBe(422)
+  })
+
+  it('создаёт несколько комментариев и редактирует их текст', async () => {
+    const song = await createSong('Комментарии')
+    const firstId = '2f5a48d9-2e31-47f0-87ed-11e67143b003'
+    const secondId = '5d170679-4bf8-45f1-863d-94f737e88724'
+    const document: TestLyricsDocument = {
+      type: 'doc',
+      content: [{
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'Слово', marks: [{ type: 'annotation', attrs: { commentId: firstId } }] },
+          { type: 'text', text: ' и ' },
+          { type: 'text', text: 'фраза', marks: [{ type: 'annotation', attrs: { commentId: secondId } }] },
+        ],
+      }],
+    }
+
+    const first = await request<TestSong>(`/api/songs/${song.id}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: firstId,
+        text: 'Мягче',
+        quotedText: 'Слово',
+        lyricsDocument: {
+          ...document,
+          content: [{
+            type: 'paragraph',
+            content: [{ type: 'text', text: 'Слово', marks: [{ type: 'annotation', attrs: { commentId: firstId } }] }],
+          }],
+        },
+      }),
+    })
+    expect(first.response.status).toBe(201)
+
+    const second = await request<TestSong>(`/api/songs/${song.id}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: secondId,
+        text: 'Яснее',
+        quotedText: 'фраза',
+        lyricsDocument: document,
+      }),
+    })
+    expect(second.response.status).toBe(201)
+    expect(second.body?.data?.lyricsComments).toHaveLength(2)
+
+    const edited = await request<TestSong>(
+      `/api/songs/${song.id}/comments/${firstId}`,
+      { method: 'PUT', body: JSON.stringify({ text: 'Ещё мягче' }) },
+    )
+    expect(edited.response.status).toBe(200)
+    expect(edited.body?.data?.lyricsComments[0]).toMatchObject({
+      id: firstId,
+      text: 'Ещё мягче',
+      isOrphaned: false,
+    })
+  })
+
+  it('сохраняет привязку после посторонней правки и помечает удалённый фрагмент', async () => {
+    const song = await createSong('Стабильная привязка')
+    const commentId = 'bc0c458d-6627-45b9-8bda-f036ea878957'
+    const annotatedText = {
+      type: 'text' as const,
+      text: 'главная строка',
+      marks: [{ type: 'annotation', attrs: { commentId } }],
+    }
+    const initialDocument: TestLyricsDocument = {
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [annotatedText] }],
+    }
+    await request<TestSong>(`/api/songs/${song.id}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({
+        id: commentId,
+        text: 'Сохраняем опору',
+        quotedText: 'главная строка',
+        lyricsDocument: initialDocument,
+      }),
+    })
+
+    const unrelatedEdit: TestLyricsDocument = {
+      type: 'doc',
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'Новый вступительный текст' }] },
+        { type: 'paragraph', content: [annotatedText] },
+      ],
+    }
+    const preserved = await request<TestSong>(`/api/songs/${song.id}/lyrics`, {
+      method: 'PUT',
+      body: JSON.stringify({ lyricsDocument: unrelatedEdit }),
+    })
+    expect(preserved.body?.data?.lyricsComments[0].isOrphaned).toBe(false)
+
+    const deleted = await request<TestSong>(`/api/songs/${song.id}/lyrics`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        lyricsDocument: {
+          type: 'doc',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Другой текст' }] }],
+        },
+      }),
+    })
+    expect(deleted.response.status).toBe(200)
+    expect(deleted.body?.data?.lyricsComments[0]).toMatchObject({
+      id: commentId,
+      isOrphaned: true,
+    })
   })
 })

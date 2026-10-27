@@ -15,10 +15,12 @@ export interface OriginalFileReference {
 export interface MediaFile extends RecoverableEntity {
   id: EntityId
   storageKey: string
-  url?: string
-  kind: 'audio' | 'video'
+  kind: 'audio'
   original: OriginalFileReference
+  storageProvider: 'local' | 'b2'
+  status: 'pending' | 'active' | 'recoverable' | 'failed'
   createdAt: ISODateTime
+  verifiedAt: ISODateTime | null
 }
 
 export interface TextRangeReference {
@@ -63,6 +65,8 @@ export interface Exercise extends RecoverableEntity {
   notes: string
   plusMediaId: EntityId | null
   minusMediaId: EntityId | null
+  plusMedia?: MediaFile | null
+  minusMedia?: MediaFile | null
   tags: ExerciseTag[]
   createdAt: ISODateTime
   updatedAt: ISODateTime
@@ -131,6 +135,7 @@ export interface SongSummary {
 export interface Song extends SongSummary, RecoverableEntity {
   youtubeUrl: string | null
   minusMediaId: EntityId | null
+  minusMedia?: MediaFile | null
   lyricsDocument: LyricsDocument
   lyricsComments: LyricsComment[]
 }

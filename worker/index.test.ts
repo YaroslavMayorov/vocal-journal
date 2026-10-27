@@ -1,9 +1,11 @@
 // @vitest-environment node
 
 import { readFile } from 'node:fs/promises'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createHmac } from 'node:crypto'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { convertV4MiniflareOptions, Miniflare } from 'miniflare'
 import worker from './index'
+import type { Env } from './types'
 
 interface ApiResponse<T> {
   data?: T
@@ -21,6 +23,21 @@ interface TestExercise {
   title: string
   notes: string
   tags: Array<{ id: string; name: string }>
+  plusMedia?: TestMedia | null
+  minusMedia?: TestMedia | null
+}
+
+interface TestMedia {
+  id: string
+  original: { fileName: string; mimeType: string; sizeBytes: number }
+  storageProvider: 'local' | 'b2'
+  status: 'pending' | 'active' | 'recoverable' | 'failed'
+}
+
+interface UploadAuthorization {
+  mediaId: string
+  uploadUrl: string
+  headers: Record<string, string>
 }
 
 interface TestLyricsDocument {
@@ -41,6 +58,7 @@ interface TestSong {
   artist: string
   status: 'learning' | 'learned' | 'postponed'
   youtubeUrl: string | null
+  minusMedia?: TestMedia | null
   lyricsDocument: TestLyricsDocument
   lyricsComments: Array<{
     id: string
@@ -58,6 +76,7 @@ let db: Awaited<ReturnType<Miniflare['getD1Database']>>
 async function request<T>(
   path: string,
   init?: RequestInit,
+  envOverrides: Partial<Env> = {},
 ): Promise<{ response: Response; body?: ApiResponse<T> }> {
   const requestObject = new Request(`http://local.test${path}`, {
     ...init,
@@ -65,7 +84,10 @@ async function request<T>(
   }) as unknown as Parameters<typeof worker.fetch>[0]
   const response = await worker.fetch(
     requestObject,
-    { DB: db as unknown as D1Database },
+    {
+      DB: db as unknown as D1Database,
+      ...envOverrides,
+    },
   )
   const body = response.status === 204 ? undefined : ((await response.json()) as ApiResponse<T>)
   return { response, body }
@@ -115,6 +137,7 @@ beforeEach(async () => {
   for (const file of [
     'migrations/0001_exercises_and_tags.sql',
     'migrations/0002_songs_and_lyrics_comments.sql',
+    'migrations/0003_media_files.sql',
   ]) {
     const migration = await readFile(file, 'utf8')
     // Apply the same migrations statement-by-statement because the current
@@ -130,6 +153,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.unstubAllGlobals()
   await miniflare?.dispose()
 })
 
@@ -512,5 +536,218 @@ describe('API песен', () => {
       id: commentId,
       isOrphaned: true,
     })
+  })
+})
+
+describe('API медиа', () => {
+  const localMediaEnv: Partial<Env> = {
+    MEDIA_UPLOADS_ENABLED: 'true',
+    MEDIA_STORAGE_PROVIDER: 'local',
+  }
+  const b2MediaEnv: Partial<Env> = {
+    MEDIA_UPLOADS_ENABLED: 'true',
+    MEDIA_STORAGE_PROVIDER: 'b2',
+    B2_ENDPOINT: 'https://s3.us-west-004.backblazeb2.com',
+    B2_REGION: 'us-west-004',
+    B2_BUCKET: 'test-private-bucket',
+    B2_KEY_ID: 'test-key-id',
+    B2_APPLICATION_KEY: 'test-application-key',
+  }
+
+  async function authorize(
+    ownerId: string,
+    overrides: Record<string, unknown> = {},
+    envOverrides: Partial<Env> = localMediaEnv,
+  ) {
+    return request<UploadAuthorization>('/api/media/uploads', {
+      method: 'POST',
+      body: JSON.stringify({
+        ownerType: 'exercise',
+        ownerId,
+        slot: 'plus',
+        originalFilename: 'vocal.mp3',
+        contentType: 'audio/mpeg',
+        sizeBytes: 4,
+        ...overrides,
+      }),
+    }, envOverrides)
+  }
+
+  async function finalize(mediaId: string, metadata = {
+    sizeBytes: 4,
+    contentType: 'audio/mpeg',
+  }) {
+    const row = await db.prepare(
+      'SELECT storage_key FROM media_files WHERE id = ?',
+    ).bind(mediaId).first<{ storage_key: string }>()
+    const receipt = createHmac(
+      'sha256',
+      'vocal-journal-local-development-only',
+    )
+      .update([
+        'receipt',
+        row!.storage_key,
+        metadata.sizeBytes,
+        metadata.contentType,
+      ].join('\n'))
+      .digest('hex')
+    return request<TestMedia>(`/api/media/uploads/${mediaId}/finalize`, {
+      method: 'POST',
+      body: JSON.stringify({ ...metadata, receipt }),
+    }, localMediaEnv)
+  }
+
+  it('проверяет формат, размер, имя и допустимый слот', async () => {
+    const exercise = await createExercise('Медиа-валидация')
+    const validTypes = [
+      ['track.mp3', 'audio/mpeg'],
+      ['track.m4a', 'audio/mp4'],
+      ['track.wav', 'audio/wav'],
+    ]
+    for (const [originalFilename, contentType] of validTypes) {
+      const result = await authorize(exercise.id, { originalFilename, contentType })
+      expect(result.response.status).toBe(201)
+    }
+
+    const invalid = await authorize(exercise.id, {
+      originalFilename: '../track.exe',
+      contentType: 'application/octet-stream',
+    })
+    const empty = await authorize(exercise.id, { sizeBytes: 0 })
+    const wrongSlot = await authorize(exercise.id, { slot: 'backing' })
+    expect(invalid.response.status).toBe(422)
+    expect(empty.response.status).toBe(422)
+    expect(wrongSlot.response.status).toBe(422)
+  })
+
+  it('загружает файл, связывает слот и выдаёт временный доступ', async () => {
+    const exercise = await createExercise('Плюс')
+    const authorization = await authorize(exercise.id)
+    const mediaId = authorization.body!.data!.mediaId
+    const finalized = await finalize(mediaId)
+    const fetched = await request<TestExercise>(`/api/exercises/${exercise.id}`)
+    const access = await request<{ playbackUrl: string; downloadUrl: string }>(
+      `/api/media/${mediaId}/access`,
+    )
+
+    expect(finalized.response.status).toBe(200)
+    expect(finalized.body?.data).toMatchObject({
+      id: mediaId,
+      status: 'active',
+      original: { fileName: 'vocal.mp3', sizeBytes: 4 },
+    })
+    expect(fetched.body?.data?.plusMedia?.id).toBe(mediaId)
+    expect(access.response.status).toBe(200)
+    expect(access.body?.data?.playbackUrl).toContain('/objects/media/')
+    expect(access.body?.data?.downloadUrl).toContain('disposition=attachment')
+  })
+
+  it('связывает фонограмму со слотом песни', async () => {
+    const song = await createSong('Песня с минусом')
+    const authorization = await authorize(song.id, {
+      ownerType: 'song',
+      slot: 'backing',
+      originalFilename: 'backing.m4a',
+      contentType: 'audio/mp4',
+    })
+    const mediaId = authorization.body!.data!.mediaId
+    await finalize(mediaId, { sizeBytes: 4, contentType: 'audio/mp4' })
+
+    const fetched = await request<TestSong>(`/api/songs/${song.id}`)
+    expect(fetched.body?.data?.minusMedia?.id).toBe(mediaId)
+    expect(fetched.body?.data?.minusMedia?.original.fileName).toBe('backing.m4a')
+  })
+
+  it('при замене сохраняет предыдущую версию как recoverable', async () => {
+    const exercise = await createExercise('Замена')
+    const first = await authorize(exercise.id)
+    const firstId = first.body!.data!.mediaId
+    await finalize(firstId)
+
+    const second = await authorize(exercise.id, {
+      originalFilename: 'replacement.wav',
+      contentType: 'audio/wav',
+    })
+    const secondId = second.body!.data!.mediaId
+    await finalize(secondId, { sizeBytes: 4, contentType: 'audio/wav' })
+
+    const versions = await db.prepare(
+      'SELECT id, status, replaces_media_id FROM media_files WHERE exercise_id = ? ORDER BY created_at',
+    )
+      .bind(exercise.id)
+      .all<{ id: string; status: string; replaces_media_id: string | null }>()
+    expect(versions.results).toEqual([
+      { id: firstId, status: 'recoverable', replaces_media_id: null },
+      { id: secondId, status: 'active', replaces_media_id: firstId },
+    ])
+  })
+
+  it('не переключает активный файл при неудачной замене', async () => {
+    const exercise = await createExercise('Откат')
+    const first = await authorize(exercise.id)
+    const firstId = first.body!.data!.mediaId
+    await finalize(firstId)
+
+    const replacement = await authorize(exercise.id)
+    const failed = await finalize(replacement.body!.data!.mediaId, {
+      sizeBytes: 99,
+      contentType: 'audio/mpeg',
+    })
+    const fetched = await request<TestExercise>(`/api/exercises/${exercise.id}`)
+
+    expect(failed.response.status).toBe(422)
+    expect(fetched.body?.data?.plusMedia?.id).toBe(firstId)
+  })
+
+  it('обрабатывает отсутствующий объект и ошибку хранилища', async () => {
+    const missingMedia = await request<TestMedia>(
+      '/api/media/3cf9c876-776a-4c05-a5d6-255c620d55e0/access',
+    )
+    expect(missingMedia.response.status).toBe(404)
+
+    const exercise = await createExercise('Ошибки')
+    const missingUpload = await authorize(exercise.id, {}, b2MediaEnv)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })))
+    const missing = await request<TestMedia>(
+      `/api/media/uploads/${missingUpload.body!.data!.mediaId}/finalize`,
+      { method: 'POST', body: JSON.stringify({}) },
+      b2MediaEnv,
+    )
+    expect(missing.response.status).toBe(409)
+    expect(missing.body?.error?.code).toBe('UPLOAD_NOT_FOUND')
+
+    const failedUpload = await authorize(
+      exercise.id,
+      { slot: 'minus' },
+      b2MediaEnv,
+    )
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 500 })))
+    const unavailable = await request<TestMedia>(
+      `/api/media/uploads/${failedUpload.body!.data!.mediaId}/finalize`,
+      { method: 'POST', body: JSON.stringify({}) },
+      b2MediaEnv,
+    )
+    expect(unavailable.response.status).toBe(503)
+    expect(unavailable.body?.error?.code).toBe('STORAGE_UNAVAILABLE')
+  })
+
+  it('держит записывающие endpoints выключенными без явного разрешения', async () => {
+    const exercise = await createExercise('Закрытая загрузка')
+    const disabled = await authorize(exercise.id)
+    expect(disabled.response.status).toBe(201)
+
+    const direct = await request<UploadAuthorization>('/api/media/uploads', {
+      method: 'POST',
+      body: JSON.stringify({
+        ownerType: 'exercise',
+        ownerId: exercise.id,
+        slot: 'plus',
+        originalFilename: 'vocal.mp3',
+        contentType: 'audio/mpeg',
+        sizeBytes: 4,
+      }),
+    })
+    expect(direct.response.status).toBe(503)
+    expect(direct.body?.error?.code).toBe('MEDIA_UPLOADS_DISABLED')
   })
 })

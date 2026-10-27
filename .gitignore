@@ -24,3 +24,6 @@ npm-debug.log*
 # Cloudflare local state
 .wrangler/
 .dev.vars
+
+# Uploaded audio for the local storage provider
+.local-media/

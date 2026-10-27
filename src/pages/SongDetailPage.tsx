@@ -15,6 +15,7 @@ import {
 } from '../domain/models'
 import { LyricsWorkspace } from '../features/songs/LyricsWorkspace'
 import { SongStatusBadge } from '../features/songs/SongStatusBadge'
+import { AudioMediaSlot } from '../features/media/AudioMediaSlot'
 import { useApiResource } from '../hooks/useApiResource'
 import { getYouTubeEmbedUrl } from '../lib/youtube'
 
@@ -142,7 +143,24 @@ function SongDetailContent({
             )}
           </SectionCard>
 
-          <SectionCard title="Минус" description="Минус не добавлен" />
+          <SectionCard title="Минус">
+            <AudioMediaSlot
+              ownerType="song"
+              ownerId={song.id}
+              slot="backing"
+              media={song.minusMedia ?? null}
+              emptyLabel="Минус не добавлен"
+              uploadLabel="Загрузить минус"
+              onMediaChange={(media) =>
+                setSong((current) => ({
+                  ...current,
+                  minusMediaId: media.id,
+                  minusMedia: media,
+                  updatedAt: media.verifiedAt ?? current.updatedAt,
+                }))
+              }
+            />
+          </SectionCard>
         </div>
 
         <LyricsWorkspace song={song} onSongChange={setSong} />

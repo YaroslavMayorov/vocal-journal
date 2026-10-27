@@ -1,5 +1,33 @@
 export interface Env {
   DB: D1Database
+  MEDIA_STORAGE_PROVIDER?: 'local' | 'b2'
+  MEDIA_UPLOADS_ENABLED?: string
+  LOCAL_MEDIA_BASE_URL?: string
+  LOCAL_MEDIA_SIGNING_SECRET?: string
+  B2_ENDPOINT?: string
+  B2_REGION?: string
+  B2_BUCKET?: string
+  B2_KEY_ID?: string
+  B2_APPLICATION_KEY?: string
+}
+
+export type MediaStatus = 'pending' | 'active' | 'recoverable' | 'failed'
+export type MediaSlot = 'plus' | 'minus' | 'backing'
+
+export interface MediaRow {
+  id: string
+  storage_key: string
+  original_filename: string
+  content_type: string
+  size_bytes: number
+  storage_provider: 'local' | 'b2'
+  status: MediaStatus
+  exercise_id: string | null
+  song_id: string | null
+  slot: MediaSlot
+  replaces_media_id: string | null
+  created_at: string
+  verified_at: string | null
 }
 
 export interface ExerciseRow {

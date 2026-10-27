@@ -5,6 +5,7 @@ import type {
   TagRow,
   TagWithCountRow,
 } from './types'
+import { getActiveMediaForExercise } from './media-data'
 
 export function mapTag(row: TagRow | TagWithCountRow): Tag {
   return {
@@ -66,7 +67,14 @@ export async function getExercise(
     .bind(id)
     .all<ExerciseWithTagRow>()
 
-  return mapExerciseRows(result.results)[0]
+  const exercise = mapExerciseRows(result.results)[0]
+  if (!exercise) return undefined
+
+  const [plusMedia, minusMedia] = await Promise.all([
+    getActiveMediaForExercise(db, id, 'plus'),
+    getActiveMediaForExercise(db, id, 'minus'),
+  ])
+  return { ...exercise, plusMedia, minusMedia }
 }
 
 export async function listExercises(db: D1Database): Promise<Exercise[]> {

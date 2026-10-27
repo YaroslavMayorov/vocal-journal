@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import { useLocation, useParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { exercisesApi } from '../api/exercises'
@@ -8,40 +8,22 @@ import { ResourceNotFound } from '../components/ui/ResourceNotFound'
 import { SectionCard } from '../components/ui/SectionCard'
 import { ErrorState, LoadingState } from '../components/ui/StateMessage'
 import { TagBadge } from '../components/ui/TagBadge'
+import type { Exercise } from '../domain/models'
+import { AudioMediaSlot } from '../features/media/AudioMediaSlot'
 import { useApiResource } from '../hooks/useApiResource'
 
 interface LocationState {
   message?: string
 }
 
-export function ExerciseDetailPage() {
-  const { id = '' } = useParams()
-  const location = useLocation()
-  const loadExercise = useCallback(() => exercisesApi.get(id), [id])
-  const resource = useApiResource(loadExercise)
-  const message = (location.state as LocationState | null)?.message
-
-  if (
-    resource.status === 'error' &&
-    resource.error instanceof ApiError &&
-    [400, 404].includes(resource.error.status)
-  ) {
-    return (
-      <ResourceNotFound
-        title="Упражнение не найдено"
-        description="Возможно, оно было удалено или ссылка устарела."
-        backTo="/exercises"
-        backLabel="Вернуться к упражнениям"
-      />
-    )
-  }
-
-  if (resource.status === 'loading') return <LoadingState />
-  if (resource.status === 'error') {
-    return <ErrorState onRetry={resource.reload} />
-  }
-
-  const exercise = resource.data
+function ExerciseDetailContent({
+  initialExercise,
+  message,
+}: {
+  initialExercise: Exercise
+  message?: string
+}) {
+  const [exercise, setExercise] = useState(initialExercise)
 
   return (
     <div className="space-y-7">
@@ -76,9 +58,43 @@ export function ExerciseDetailPage() {
         </div>
       </section>
 
-      <div className="grid gap-5 md:grid-cols-2">
-        <SectionCard title="Плюс" description="Плюс не добавлен" />
-        <SectionCard title="Минус" description="Минус не добавлен" />
+      <div className="grid gap-5 md:grid-cols-2 md:items-start">
+        <SectionCard title="Плюс">
+          <AudioMediaSlot
+            ownerType="exercise"
+            ownerId={exercise.id}
+            slot="plus"
+            media={exercise.plusMedia ?? null}
+            emptyLabel="Плюс не добавлен"
+            uploadLabel="Загрузить плюс"
+            onMediaChange={(media) =>
+              setExercise((current) => ({
+                ...current,
+                plusMediaId: media.id,
+                plusMedia: media,
+                updatedAt: media.verifiedAt ?? current.updatedAt,
+              }))
+            }
+          />
+        </SectionCard>
+        <SectionCard title="Минус">
+          <AudioMediaSlot
+            ownerType="exercise"
+            ownerId={exercise.id}
+            slot="minus"
+            media={exercise.minusMedia ?? null}
+            emptyLabel="Минус не добавлен"
+            uploadLabel="Загрузить минус"
+            onMediaChange={(media) =>
+              setExercise((current) => ({
+                ...current,
+                minusMediaId: media.id,
+                minusMedia: media,
+                updatedAt: media.verifiedAt ?? current.updatedAt,
+              }))
+            }
+          />
+        </SectionCard>
       </div>
 
       <SectionCard title="Комментарий преподавателя">
@@ -96,5 +112,39 @@ export function ExerciseDetailPage() {
         description="Записи исполнения и комментарии к ним будут доступны в одной из следующих задач."
       />
     </div>
+  )
+}
+
+export function ExerciseDetailPage() {
+  const { id = '' } = useParams()
+  const location = useLocation()
+  const loadExercise = useCallback(() => exercisesApi.get(id), [id])
+  const resource = useApiResource(loadExercise)
+  const message = (location.state as LocationState | null)?.message
+
+  if (
+    resource.status === 'error' &&
+    resource.error instanceof ApiError &&
+    [400, 404].includes(resource.error.status)
+  ) {
+    return (
+      <ResourceNotFound
+        title="Упражнение не найдено"
+        description="Возможно, оно было удалено или ссылка устарела."
+        backTo="/exercises"
+        backLabel="Вернуться к упражнениям"
+      />
+    )
+  }
+
+  if (resource.status === 'loading') return <LoadingState />
+  if (resource.status === 'error') return <ErrorState onRetry={resource.reload} />
+
+  return (
+    <ExerciseDetailContent
+      key={resource.data.updatedAt}
+      initialExercise={resource.data}
+      message={message}
+    />
   )
 }

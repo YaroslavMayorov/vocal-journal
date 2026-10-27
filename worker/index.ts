@@ -9,6 +9,11 @@ import {
 import { error, json, validationError } from './responses'
 import type { Env, TagRow } from './types'
 import { getAnnotationIds } from './lyrics'
+import {
+  authorizeMediaUpload,
+  finalizeMediaUpload,
+  getMediaAccess,
+} from './media'
 import { getSong, getSongCommentIds, listSongs } from './songs'
 import {
   exerciseInputSchema,
@@ -462,6 +467,31 @@ async function route(request: Request, env: Env): Promise<Response> {
 
   const resource = parts[1]
   const rawId = parts[2]
+  if (
+    resource === 'media' &&
+    parts[2] === 'uploads' &&
+    parts.length === 3 &&
+    request.method === 'POST'
+  ) {
+    return authorizeMediaUpload(request, env)
+  }
+  if (
+    resource === 'media' &&
+    parts[2] === 'uploads' &&
+    parts[4] === 'finalize' &&
+    parts.length === 5 &&
+    request.method === 'POST'
+  ) {
+    return finalizeMediaUpload(request, env, parts[3] ?? '')
+  }
+  if (
+    resource === 'media' &&
+    parts[3] === 'access' &&
+    parts.length === 4 &&
+    request.method === 'GET'
+  ) {
+    return getMediaAccess(env, rawId ?? '')
+  }
   if (!['exercises', 'tags', 'songs'].includes(resource ?? '')) {
     return error(404, 'NOT_FOUND', 'Маршрут не найден')
   }

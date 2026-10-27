@@ -5,6 +5,7 @@ import type {
   SongSummary,
 } from '../src/domain/models'
 import { getAnnotationIds, lyricsDocumentSchema } from './lyrics'
+import { getActiveMediaForSong } from './media-data'
 import type { LyricsCommentRow, SongRow } from './types'
 
 function parseLyricsDocument(value: string): LyricsDocument {
@@ -76,11 +77,13 @@ export async function getSong(
     )
     .bind(id)
     .all<LyricsCommentRow>()
+  const minusMedia = await getActiveMediaForSong(db, id)
 
   return {
     ...mapSongSummary(row),
     youtubeUrl: row.youtube_url,
     minusMediaId: row.minus_media_id,
+    minusMedia,
     lyricsDocument,
     lyricsComments: comments.results.map((comment) =>
       mapComment(comment, annotationIds),
